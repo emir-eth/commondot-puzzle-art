@@ -7,8 +7,64 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
-import { readFile } from 'node:fs/promises';
-import * as opentype from 'opentype.js';
+
+// Basit 5x7 blok font (font bağımsız)
+const PIX = {
+  'A': ['01110','10001','10001','11111','10001','10001','10001'],
+  'D': ['11110','10001','10001','10001','10001','10001','11110'],
+  'E': ['11111','10000','10000','11110','10000','10000','11111'],
+  'N': ['10001','11001','10101','10011','10001','10001','10001'],
+  'O': ['01110','10001','10001','10001','10001','10001','01110'],
+  'S': ['01111','10000','10000','01110','00001','00001','11110'],
+  'T': ['11111','00100','00100','00100','00100','00100','00100'],
+  'U': ['10001','10001','10001','10001','10001','10001','01110'],
+  ' ': ['00000','00000','00000','00000','00000','00000','00000'],
+};
+
+function buildBlockTextSVG(phrase, targetW, fill='rgba(0,0,0,0.28)') {
+  const chars = phrase.toUpperCase().split('');
+  const CHAR_W = 5, CHAR_H = 7;
+  const LETTER_SPACING = 2;  // harf arası
+  const WORD_SPACING = 4;    // kelime arası
+
+  // toplam sütun sayısı
+  let totalCols = 0;
+  chars.forEach((ch, i) => {
+    totalCols += CHAR_W;
+    if (i < chars.length - 1) totalCols += (ch === ' ' ? WORD_SPACING : LETTER_SPACING);
+  });
+
+  // hedef genişliğe göre hücre boyutu
+  const cell = Math.max(2, Math.floor(targetW / totalCols));
+  const dot  = Math.max(1, Math.floor(cell * 0.8)); // hücre içi dikdörtgen
+  const totalW = totalCols * cell;
+  const totalH = CHAR_H * cell;
+
+  let xCursor = 0;
+  const rects = [];
+  chars.forEach((ch, idx) => {
+    const grid = PIX[ch] || PIX[' '];
+    for (let r = 0; r < CHAR_H; r++) {
+      for (let c = 0; c < CHAR_W; c++) {
+        if (grid[r][c] === '1') {
+          const x = xCursor + c * cell + Math.floor((cell - dot) / 2);
+          const y = r * cell + Math.floor((cell - dot) / 2);
+          rects.push(`<rect x="${x}" y="${y}" width="${dot}" height="${dot}" rx="${Math.floor(dot*0.15)}" />`);
+        }
+      }
+    }
+    xCursor += CHAR_W * cell + (ch === ' ' ? WORD_SPACING : LETTER_SPACING) * cell;
+  });
+
+  const svg = `
+    <svg width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" xmlns="http://www.w3.org/2000/svg">
+      <g fill="${fill}">
+        ${rects.join('\n')}
+      </g>
+    </svg>
+  `;
+  return { svg, w: totalW, h: totalH };
+}
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
@@ -16,7 +72,7 @@ export async function GET(req) {
   const directUrl = searchParams.get('url');
 
   try {
-    // 1) Kaynak görseli al
+    // 1) Görseli getir
     let imgBuffer;
     if (rawPath) {
       if (!/^[a-zA-Z0-9/_\-.]+$/.test(rawPath)) {
@@ -29,68 +85,32 @@ export async function GET(req) {
       imgBuffer = Buffer.from(await data.arrayBuffer());
     } else if (directUrl) {
       let u;
-      try { u = new URL(directUrl); } catch {
-        return NextResponse.json({ error: 'invalid url' }, { status: 400 });
-      }
+      try { u = new URL(directUrl); } catch { return NextResponse.json({ error: 'invalid url' }, { status: 400 }); }
       if (!u.hostname.endsWith('.supabase.co')) {
         return NextResponse.json({ error: 'forbidden origin' }, { status: 403 });
       }
       const r = await fetch(directUrl, { cache: 'no-store' });
-      if (!r.ok) {
-        return NextResponse.json({ error: `fetch failed (${r.status})` }, { status: 502 });
-      }
+      if (!r.ok) return NextResponse.json({ error: `fetch failed (${r.status})` }, { status: 502 });
       imgBuffer = Buffer.from(await r.arrayBuffer());
     } else {
       return NextResponse.json({ error: 'path or url required' }, { status: 400 });
     }
 
-    // 2) Görsel ölçüleri
+    // 2) Boyutlar
     const meta = await sharp(imgBuffer).metadata();
     const width  = meta.width  || 1200;
     const height = meta.height || 800;
 
-    // 3) Yazıyı "path"e çevir (font bağımlılığı yok)
-    //    - segoe-ui-bold.woff dosyasını aynı klasöre koymuştun
-    const fontUrl = new URL('./segoe-ui-bold.woff', import.meta.url);
-    const fontBytes = await readFile(fontUrl);
-    const font = opentype.parse(fontBytes.buffer);
+    // 3) Yazıyı üret ve döndür
+    const targetW = Math.floor(Math.min(width, height) * 0.75); // kısa kenarın %75'i
+    const { svg: wordSvg } = buildBlockTextSVG('DO NOT USE', targetW);
+    const rotatedOverlay = await sharp(Buffer.from(wordSvg))
+      .rotate(-30, { background: { r:0, g:0, b:0, alpha:0 } })
+      .toBuffer();
 
-    const text = 'do not use';
-    const targetSize = Math.max(24, Math.floor(Math.min(width, height) * 0.12)); // biraz daha görünür olsun
-    // path’i (0,0) referansıyla üret
-    const pathObj = font.getPath(text, 0, 0, targetSize);
-    const bbox = pathObj.getBoundingBox();
-    // path ‘d’ verisi
-    const d = pathObj.toPathData(3); // 3: precision
-
-    // Ortalamak için translate değerleri (merkezi width/2,height/2’ye getir)
-    const textW = bbox.x2 - bbox.x1;
-    const textH = bbox.y2 - bbox.y1;
-    // opentype koordinatlarında y aşağı negatif, o yüzden +/- ayarlıyoruz:
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const translateX = centerX - (bbox.x1 + textW / 2);
-    const translateY = centerY - (bbox.y1 + textH / 2);
-
-    // 4) SVG overlay: path + rotate(-30deg)
-    const fillOpacity = 0.30; // daha belirgin olsun
-    const strokeOpacity = 0.35;
-    const strokeWidth = Math.max(2, Math.floor(targetSize / 18));
-
-    const svg = `
-      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-        <g transform="translate(${translateX}, ${translateY}) rotate(-30, ${bbox.x1 + textW/2}, ${bbox.y1 + textH/2})">
-          <path d="${d}"
-            fill="rgba(0,0,0,${fillOpacity})"
-            stroke="rgba(255,255,255,${strokeOpacity})"
-            stroke-width="${strokeWidth}" />
-        </g>
-      </svg>
-    `;
-
-    // 5) Composite ve yanıt
+    // 4) Composite → JPEG
     const outBuffer = await sharp(imgBuffer)
-      .composite([{ input: Buffer.from(svg), gravity: 'center' }])
+      .composite([{ input: rotatedOverlay, gravity: 'center', blend: 'over', opacity: 0.9 }])
       .jpeg({ quality: 90 })
       .toBuffer();
 
