@@ -1,4 +1,7 @@
 // app/api/wm/route.js
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
@@ -72,16 +75,17 @@ export async function GET(req) {
       .jpeg({ quality: 90 })
       .toBuffer();
 
-    return new NextResponse(out, {
-      status: 200,
-      headers: {
-        'Content-Type': 'image/jpeg',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-        'Content-Disposition': 'inline; filename="wm.jpg"',
-      },
-    });
+    // CDN ve tüm katmanlar için agresif no-cache
+    const headers = {
+      'Content-Type': 'image/jpeg',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store', // CDN (Vercel Edge) için
+      'Content-Disposition': 'inline; filename="wm.jpg"',
+    };
+
+    return new NextResponse(out, { status: 200, headers });
   } catch (err) {
     console.error('wm error', err);
     return NextResponse.json({ error: err?.message || 'server error' }, { status: 500 });
