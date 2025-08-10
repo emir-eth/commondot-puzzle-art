@@ -7,6 +7,8 @@ export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
+import fs from 'fs';
+import path from 'path';
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
@@ -25,10 +27,7 @@ export async function GET(req) {
       if (error || !data) {
         return NextResponse.json({ error: error?.message || 'download failed' }, { status: 400 });
       }
-
-      // Buffer'a çevir (arrayBuffer → Buffer)
-      const arrBuf = await data.arrayBuffer();
-      imgBuffer = Buffer.from(arrBuf);
+      imgBuffer = Buffer.from(await data.arrayBuffer());
 
     } else if (directUrl) {
       let u;
@@ -43,8 +42,7 @@ export async function GET(req) {
       if (!r.ok) {
         return NextResponse.json({ error: `fetch failed (${r.status})` }, { status: 502 });
       }
-      const arrBuf = await r.arrayBuffer();
-      imgBuffer = Buffer.from(arrBuf);
+      imgBuffer = Buffer.from(await r.arrayBuffer());
 
     } else {
       return NextResponse.json({ error: 'path or url required' }, { status: 400 });
@@ -54,10 +52,21 @@ export async function GET(req) {
     const width  = meta.width  || 1200;
     const height = meta.height || 800;
 
+    // WOFF fontu oku ve Base64 olarak encode et
+    const fontPath = path.join(process.cwd(), 'app', 'api', 'wm', 'segoe-ui-bold.woff');
+    const fontBase64 = fs.readFileSync(fontPath).toString('base64');
+
     const fontSize = Math.max(24, Math.floor(Math.min(width, height) * 0.1));
     const svg = `
       <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-        <style>text { font-family: Arial, sans-serif; font-weight: 700; }</style>
+        <style>
+          @font-face {
+            font-family: 'SegoeUIBold';
+            src: url(data:font/woff;base64,${fontBase64}) format('woff');
+            font-weight: bold;
+          }
+          text { font-family: 'SegoeUIBold'; font-weight: bold; }
+        </style>
         <text x="50%" y="50%" text-anchor="middle" dy=".35em"
           font-size="${fontSize}" fill="rgba(0,0,0,0.25)"
           transform="rotate(-30, ${width/2}, ${height/2})">
