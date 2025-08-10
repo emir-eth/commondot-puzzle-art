@@ -1,4 +1,5 @@
-// app/api/wm/route.js
+export const dynamic = 'force-dynamic';
+
 import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
@@ -72,7 +73,7 @@ export async function GET(req) {
         'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0',
-        'Content-Disposition': 'inline; filename="wm.jpg"',
+        'Content-Disposition': 'inline; filename="wm.jpg"`,
       },
     });
   } catch (err) {

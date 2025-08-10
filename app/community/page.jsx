@@ -19,12 +19,13 @@ export default function CommunityPage() {
   const ALLOWED_MIME = ['image/jpeg', 'image/png'];
   const ALLOWED_EXT = new Set(['jpg', 'jpeg', 'png']);
 
+  // URL gibi görünen stringleri path olarak kullanmayalım (eski kayıt koruması)
   const isUrlLike = (s) => /^https?:\/\//i.test(s || '');
 
   async function fetchGallery() {
     const { data, error } = await supabase
       .from('gallery')
-      .select('id, username, image_path, created_at') // gereksiz kolonlar çıkarıldı
+      .select('*')
       .order('created_at', { ascending: false })
       .limit(60);
     if (!error) setItems(data || []);
@@ -56,6 +57,7 @@ export default function CommunityPage() {
 
     setSubmitting(true);
     try {
+      // Public URL yerine yalnızca path kaydediyoruz (bucket PRIVATE)
       const filePath = `${crypto.randomUUID()}.${ext}`;
       const { error: uploadErr } = await supabase
         .storage.from('images')
@@ -64,7 +66,7 @@ export default function CommunityPage() {
 
       const { error: insertErr } = await supabase.from('gallery').insert({
         username: username?.trim() || null,
-        image_path: filePath,
+        image_path: filePath, // <- URL değil, path kaydediyoruz
       });
       if (insertErr) throw insertErr;
 
@@ -83,6 +85,7 @@ export default function CommunityPage() {
   const openViewer = (item) => { setViewerItem(item); setViewerOpen(true); };
   const closeViewer = () => { setViewerOpen(false); setViewerItem(null); };
 
+  // Modal: server-side watermark'lı içerik çiz
   useEffect(() => {
     if (!viewerOpen || !viewerItem) return;
     const canvas = canvasRef.current;
@@ -92,6 +95,7 @@ export default function CommunityPage() {
 
     (async () => {
       try {
+        // SADECE image_path kullan (image_url fallback kaldırıldı)
         const wmUrl =
           (viewerItem.image_path && !isUrlLike(viewerItem.image_path))
             ? `/api/wm?path=${encodeURIComponent(viewerItem.image_path)}`
