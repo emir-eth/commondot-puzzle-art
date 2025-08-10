@@ -21,13 +21,18 @@ const PIX = {
   ' ': ['00000','00000','00000','00000','00000','00000','00000'],
 };
 
-function buildBlockTextSVG(phrase, targetW, fill='rgba(0,0,0,0.28)') {
+function buildBlockTextSVG(
+  phrase,
+  targetW,
+  fill = 'rgba(0,0,0,0.42)',       // daha görünür siyah
+  stroke = 'rgba(255,255,255,0.45)' // beyaz kontur
+) {
   const chars = phrase.toUpperCase().split('');
   const CHAR_W = 5, CHAR_H = 7;
-  const LETTER_SPACING = 2;  // harf arası
-  const WORD_SPACING = 4;    // kelime arası
+  const LETTER_SPACING = 2;
+  const WORD_SPACING = 4;
 
-  // toplam sütun sayısı
+  // toplam sütun
   let totalCols = 0;
   chars.forEach((ch, i) => {
     totalCols += CHAR_W;
@@ -36,34 +41,34 @@ function buildBlockTextSVG(phrase, targetW, fill='rgba(0,0,0,0.28)') {
 
   // hedef genişliğe göre hücre boyutu
   const cell = Math.max(2, Math.floor(targetW / totalCols));
-  const dot  = Math.max(1, Math.floor(cell * 0.8)); // hücre içi dikdörtgen
+  const dot  = Math.max(2, Math.floor(cell * 0.85)); // daha dolu blok
   const totalW = totalCols * cell;
   const totalH = CHAR_H * cell;
+  const strokeW = Math.max(1, Math.floor(dot * 0.18)); // kontur kalınlığı
 
   let xCursor = 0;
   const rects = [];
-  chars.forEach((ch, idx) => {
+  chars.forEach((ch) => {
     const grid = PIX[ch] || PIX[' '];
     for (let r = 0; r < CHAR_H; r++) {
       for (let c = 0; c < CHAR_W; c++) {
         if (grid[r][c] === '1') {
           const x = xCursor + c * cell + Math.floor((cell - dot) / 2);
           const y = r * cell + Math.floor((cell - dot) / 2);
-          rects.push(`<rect x="${x}" y="${y}" width="${dot}" height="${dot}" rx="${Math.floor(dot*0.15)}" />`);
+          rects.push(`<rect x="${x}" y="${y}" width="${dot}" height="${dot}" rx="${Math.floor(dot*0.18)}" />`);
         }
       }
     }
     xCursor += CHAR_W * cell + (ch === ' ' ? WORD_SPACING : LETTER_SPACING) * cell;
   });
 
-  const svg = `
+  return `
     <svg width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" xmlns="http://www.w3.org/2000/svg">
-      <g fill="${fill}">
+      <g fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}">
         ${rects.join('\n')}
       </g>
     </svg>
   `;
-  return { svg, w: totalW, h: totalH };
 }
 
 export async function GET(req) {
@@ -101,16 +106,16 @@ export async function GET(req) {
     const width  = meta.width  || 1200;
     const height = meta.height || 800;
 
-    // 3) Yazıyı üret ve döndür
-    const targetW = Math.floor(Math.min(width, height) * 0.75); // kısa kenarın %75'i
-    const { svg: wordSvg } = buildBlockTextSVG('DO NOT USE', targetW);
+    // 3) Yazıyı üret (daha büyük) ve döndür
+    const targetW = Math.floor(Math.min(width, height) * 0.85); // kısa kenarın %85'i
+    const wordSvg = buildBlockTextSVG('DO NOT USE', targetW);
     const rotatedOverlay = await sharp(Buffer.from(wordSvg))
       .rotate(-30, { background: { r:0, g:0, b:0, alpha:0 } })
       .toBuffer();
 
-    // 4) Composite → JPEG
+    // 4) Composite → JPEG (overlay opaklığı SVG’den)
     const outBuffer = await sharp(imgBuffer)
-      .composite([{ input: rotatedOverlay, gravity: 'center', blend: 'over', opacity: 0.9 }])
+      .composite([{ input: rotatedOverlay, gravity: 'center', blend: 'over' }])
       .jpeg({ quality: 90 })
       .toBuffer();
 
