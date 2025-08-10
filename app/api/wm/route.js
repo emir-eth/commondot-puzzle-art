@@ -1,5 +1,3 @@
-export const dynamic = 'force-dynamic';
-
 import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
