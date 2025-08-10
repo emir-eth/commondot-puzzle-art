@@ -3,13 +3,14 @@ import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 
-export const runtime = 'nodejs'; // Sharp için Node runtime
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // cache kapat
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
-  const rawPath = searchParams.get('path');   // PRIVATE bucket object path (e.g. "uuid.jpg")
-  const directUrl = searchParams.get('url');  // legacy public URL fallback
-  const mode = searchParams.get('mode');      // optional: 'thumb' küçült, 'tile' döşe
+  const rawPath = searchParams.get('path');
+  const directUrl = searchParams.get('url');
+  const mode = searchParams.get('mode'); // optional: 'thumb'
 
   try {
     let imgBuffer;
@@ -44,20 +45,36 @@ export async function GET(req) {
     const width  = meta.width  || 1200;
     const height = meta.height || 800;
 
-    // ---- Watermark ayarları: daha görünür ----
-    const fontSize = Math.max(32, Math.floor(Math.min(width, height) * 0.12));
-    const strokeW = Math.max(2, Math.floor(fontSize / 16));
+    // Font'a ihtiyaç duymayan diyagonal "şerit" watermark (her zaman görünür)
+    const step = Math.max(60, Math.floor(Math.min(width, height) * 0.08)); // şerit aralığı
+    const lineW = Math.max(2, Math.floor(step * 0.12));                   // şerit kalınlığı
+    const stripeOpacity = 0.28;                                            // görünürlük
 
-    // Tek büyük diyagonal yazı
-    const svgCenter = `
+    const stripesSvg = `
+      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <pattern id="wmstripe" width="${step}" height="${step}" patternUnits="userSpaceOnUse"
+                   patternTransform="rotate(-35 ${step/2} ${step/2})">
+            <rect x="0" y="${(step-lineW)/2}" width="${step}" height="${lineW}"
+                  fill="rgba(0,0,0,${stripeOpacity})"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#wmstripe)"/>
+      </svg>
+    `;
+
+    // (İsteğe bağlı) Yazı overlay — bazı ortamlarda görünmeyebilir ama dursun
+    const fontSize = Math.max(28, Math.floor(Math.min(width, height) * 0.12));
+    const strokeW = Math.max(2, Math.floor(fontSize / 16));
+    const textSvg = `
       <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
         <text x="50%" y="50%"
           text-anchor="middle"
           dominant-baseline="middle"
           font-size="${fontSize}"
-          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-          fill="rgba(0,0,0,0.35)"
-          stroke="rgba(255,255,255,0.35)"
+          font-family="sans-serif"
+          fill="rgba(0,0,0,0.32)"
+          stroke="rgba(255,255,255,0.34)"
           stroke-width="${strokeW}"
           font-weight="800"
           transform="rotate(-30, ${width/2}, ${height/2})"
@@ -65,45 +82,22 @@ export async function GET(req) {
       </svg>
     `;
 
-    // Tiled (tüm yüzeye döşeme) seçeneği
-    const step = Math.max(280, Math.floor(Math.min(width, height) * 0.35));
-    const svgTiled = `
-      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <pattern id="wm" width="${step}" height="${step}" patternUnits="userSpaceOnUse"
-                   patternTransform="rotate(-30 ${step/2} ${step/2})">
-            <text x="${step/2}" y="${step/2}"
-              text-anchor="middle"
-              dominant-baseline="middle"
-              font-size="${Math.floor(fontSize*0.8)}"
-              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-              fill="rgba(0,0,0,0.35)"
-              stroke="rgba(255,255,255,0.35)"
-              stroke-width="${Math.max(2, Math.floor(strokeW*0.9))}"
-              font-weight="800">do not use</text>
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#wm)" />
-      </svg>
-    `;
-
     let pipeline = sharp(imgBuffer);
-
-    // Thumbnail modu (grid için hızlı)
     if (mode === 'thumb') {
       pipeline = pipeline.resize({ width: Math.min(600, width) });
     }
 
-    const overlay = Buffer.from(mode === 'tile' ? svgTiled : svgCenter);
-
     const out = await pipeline
-      .composite([{ input: overlay }])
+      .composite([
+        { input: Buffer.from(stripesSvg) },          // önce şeritler (garantili)
+        { input: Buffer.from(textSvg), gravity: 'center' }, // sonra yazı (varsa)
+      ])
       .jpeg({ quality: 90 })
       .toBuffer();
 
     const headers =
       mode === 'thumb'
-        ? { // küçük önizlemelerde cache aç: hızlanır
+        ? {
             'Content-Type': 'image/jpeg',
             'Cache-Control': 'public, max-age=600, s-maxage=600',
             'Content-Disposition': 'inline; filename="wm.jpg"',
